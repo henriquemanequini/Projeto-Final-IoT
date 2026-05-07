@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Estacionamento Inteligente — Tabelas DynamoDB.
+  vagas_eventos: histórico de eventos (TTL 90d).
+  vagas_estado: estado atual de cada vaga (com GSI por status).
+
+Resources:
+
+  VagasEventos:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: vagas_eventos
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: vaga_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: vaga_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: projeto
+          Value: estacionamento-iot
+
+  VagasEstado:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: vagas_estado
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: vaga_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: vaga_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: status-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: projeto
+          Value: estacionamento-iot
+
+Outputs:
+  TabelaEventos:
+    Value: !Ref VagasEventos
+    Description: Nome da tabela de eventos
+    Export:
+      Name: estacionamento-tabela-eventos
+
+  TabelaEstado:
+    Value: !Ref VagasEstado
+    Description: Nome da tabela de estado
+    Export:
+      Name: estacionamento-tabela-estado
+
+  TabelaEventosArn:
+    Value: !GetAtt VagasEventos.Arn
+    Export:
+      Name: estacionamento-tabela-eventos-arn
+
+  TabelaEstadoArn:
+    Value: !GetAtt VagasEstado.Arn
+    Export:
+      Name: estacionamento-tabela-estado-arn

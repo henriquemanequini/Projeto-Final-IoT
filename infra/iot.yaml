@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Estacionamento Inteligente — IoT Core.
+  Cria 1 Thing (pi-setor-a) + Policy de publicação restrita aos tópicos
+  do projeto. O Certificate é gerado depois via CLI/Console e anexado
+  manualmente ao Thing (CloudFormation não baixa private key).
+
+Parameters:
+  PiId:
+    Type: String
+    Default: pi-setor-a
+    Description: Identificador do Raspberry Pi gateway.
+
+Resources:
+
+  PiThing:
+    Type: AWS::IoT::Thing
+    Properties:
+      ThingName: !Ref PiId
+
+  PiPublishPolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: pi-publish-policy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub "arn:aws:iot:${AWS::Region}:${AWS::AccountId}:client/${PiId}"
+          - Effect: Allow
+            Action: iot:Publish
+            Resource:
+              - !Sub "arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/estacionamento/${PiId}/vagas"
+              - !Sub "arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/estacionamento/${PiId}/heartbeat"
+              - !Sub "arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/estacionamento/${PiId}/erro"
+
+  FrontendSubscribePolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: frontend-subscribe-policy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub "arn:aws:iot:${AWS::Region}:${AWS::AccountId}:client/*"
+          - Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub "arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/estacionamento/+/vagas"
+          - Effect: Allow
+            Action: iot:Receive
+            Resource: !Sub "arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/estacionamento/+/vagas"
+
+Outputs:
+  ThingName:
+    Value: !Ref PiThing
+    Export:
+      Name: estacionamento-thing-name
+
+  PiPolicyName:
+    Value: !Ref PiPublishPolicy
+    Export:
+      Name: estacionamento-pi-policy
+
+  FrontendPolicyName:
+    Value: !Ref FrontendSubscribePolicy
+    Export:
+      Name: estacionamento-frontend-policy
