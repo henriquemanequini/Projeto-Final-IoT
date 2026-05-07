@@ -6,26 +6,23 @@
 
 ---
 
-## 0. Publicar no GitHub (faça localmente, no PowerShell, dentro da pasta do repo)
+## 0. Publicar no GitHub
 
-> Esse passo precisa ser feito do Windows porque OneDrive bloqueia o `.git/config`
-> quando criado de fora.
+Repositório destino: **github.com/henriquemanequini/Projeto-Final-IoT** (já criado, vazio).
 
-```powershell
-# A partir da raiz do projeto
-cd "C:\Users\Henrique Manequini\OneDrive\Documentos\ENGENHARIA MECATRÔNICA\9 Semestre\estacionamento-iot"
+**Modo fácil:** dê dois cliques em `push_inicial.bat` (na raiz do projeto, no Windows Explorer). O script:
 
-git init -b main
-git config user.email "henriquemanequini@gmail.com"
-git config user.name "Henrique Manequini"
-git add -A
-git commit -m "feat: pivot AWS managed -> EC2 self-hosted (Mosquitto+SQLite)"
+1. Verifica se o git está instalado
+2. Inicializa o repo local
+3. Configura remote pra `Projeto-Final-IoT.git`
+4. Faz commit e push
 
-# gh precisa estar autenticado (rode `gh auth login` se nunca rodou)
-gh repo create henriquemanequini/estacionamento-iot --private --source . --push
-```
+Na primeira vez que rodar, o **Git Credential Manager** abre uma janela do browser pra você autenticar no GitHub — clica em "Sign in with your browser" e pronto, ele guarda o token.
 
-Saída esperada: `https://github.com/henriquemanequini/estacionamento-iot`.
+Saída esperada: `https://github.com/henriquemanequini/Projeto-Final-IoT` populado.
+
+> **Tornar o repo privado:** acesse https://github.com/henriquemanequini/Projeto-Final-IoT/settings → role até **Danger Zone** → **Change repository visibility** → **Make private**.
+> Eu não posso fazer essa mudança automaticamente por se tratar de alteração de permissão de acesso.
 
 ---
 
@@ -70,7 +67,7 @@ sudo apt install -y python3-venv python3-pip mosquitto mosquitto-clients git cur
 # Clone (HTTPS — repo privado, gera token de acesso fino e clona com ele,
 # OU torne o repo público temporariamente para clonar)
 cd ~
-git clone https://github.com/henriquemanequini/estacionamento-iot.git
+git clone https://github.com/henriquemanequini/Projeto-Final-IoT.git estacionamento-iot
 cd estacionamento-iot
 
 # Define a senha do MQTT — escolha uma forte e guarde no seu gerenciador
@@ -84,7 +81,7 @@ Saída esperada (no final): `✓ API respondendo em http://localhost:8000/v1/hea
 
 > **Repo privado + clone:** se o clone HTTPS pedir senha, gere um *fine-grained
 > personal access token* em https://github.com/settings/tokens?type=beta com
-> escopo `Contents: read` no repositório `estacionamento-iot`, e cole no prompt.
+> escopo `Contents: read` no repositório `Projeto-Final-IoT`, e cole no prompt.
 
 ---
 
