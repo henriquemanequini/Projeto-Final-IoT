@@ -25,6 +25,14 @@ except ImportError:
     print("ERRO: boto3 nao instalado. Roda: pip install boto3")
     sys.exit(1)
 
+# Carrega .env se disponivel
+try:
+    from dotenv import load_dotenv
+    from pathlib import Path
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -107,12 +115,4 @@ def main() -> int:
             agrupado[key][m] = v
 
     for ev in agrupado.values():
-        print(json.dumps(ev, default=str, ensure_ascii=False))
-
-    print()
-    print(f"OK - {len(agrupado)} eventos unicos no Timestream pra device_id='{DEVICE_ID}'")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+        print(json.dumps(ev, default=s

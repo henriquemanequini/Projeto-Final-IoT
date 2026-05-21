@@ -54,6 +54,13 @@ except ImportError:
     print("ERRO: pyModbusTCP nao instalado. Roda: pip install pyModbusTCP")
     sys.exit(1)
 
+# Carrega .env se disponivel
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -282,13 +289,4 @@ def main() -> int:
         return 1
     finally:
         log.info("Fechando conexoes")
-        plc.close()
-        if cli is not None:
-            cli.loop_stop()
-            cli.disconnect()
-
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+     

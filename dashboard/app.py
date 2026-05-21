@@ -24,7 +24,15 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
+
+# Carrega .env automaticamente (precisa estar antes de boto3 etc)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
 
 import boto3
 import pandas as pd
@@ -317,12 +325,4 @@ if "vaga_id" in df.columns:
 
 # Tabela de eventos brutos
 with st.expander(f"Historico bruto ({len(df)} eventos)"):
-    cols_mostrar = [c for c in ["time", "vaga_id", "status", "evento_id", "device_id"] if c in df.columns]
-    st.dataframe(df[cols_mostrar], use_container_width=True, hide_index=True)
-
-
-# Auto-refresh
-if auto_refresh and intervalo:
-    import time as _time
-    _time.sleep(intervalo)
-    st.rerun()
+    cols_mostrar = [c for c in ["time", "vaga_id", "status", "evento_id", 

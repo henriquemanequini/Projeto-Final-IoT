@@ -35,6 +35,13 @@ except ImportError:
     print("ERRO: paho-mqtt nao instalado. Roda: pip install paho-mqtt==1.6.1")
     sys.exit(1)
 
+# Carrega .env se disponivel (vem com uvicorn[standard])
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
+
 
 # ---------------------------------------------------------------------------
 # Config (broker e cert vem do professor)
@@ -213,12 +220,4 @@ def main() -> int:
         print(f"  {Cor.INFO}python scripts/teste_timestream.py{Cor.RESET}")
         print()
         info("Ou abra o dashboard:")
-        print(f"  {Cor.INFO}streamlit run dashboard/app.py{Cor.RESET}")
-        return 0
-
-    err(f"So {sucesso}/{len(eventos)} eventos publicados com sucesso")
-    return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+        print(f"  {Cor.INFO}stre
