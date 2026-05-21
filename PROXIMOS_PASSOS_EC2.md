@@ -1,7 +1,7 @@
 # Próximos passos — EC2 + GitHub
 
-> Substitua `<EC2_PUBLIC_IP>` pelo IP público real da sua instância
-> (`i-0d2ba58f2725d18bf`, região `us-east-1`).
+> **Instância:** `i-0d2ba58f2725d18bf` | **Região:** `us-east-1` (N. Virgínia) | **Tipo:** `t2.small`
+> **IP público atual:** `3.89.194.80` (atenção: muda após reboot — alocar Elastic IP no passo 5)
 > Substitua `<MQTT_PASSWORD_FORTE>` por uma senha forte que **só você** vai conhecer.
 
 ---
@@ -90,7 +90,7 @@ Saída esperada (no final): `✓ API respondendo em http://localhost:8000/v1/hea
 Do PowerShell/terminal local:
 
 ```bash
-curl http://<EC2_PUBLIC_IP>:8000/v1/health
+curl http://3.89.194.80:8000/v1/health
 ```
 
 Resposta esperada:
@@ -101,8 +101,8 @@ Resposta esperada:
 
 Outras URLs úteis:
 
-- `http://<EC2_PUBLIC_IP>:8000/docs` — Swagger interativo
-- `http://<EC2_PUBLIC_IP>:8000/v1/vagas` — lista de vagas (vazia até receber MQTT)
+- `http://3.89.194.80:8000/docs` — Swagger interativo
+- `http://3.89.194.80:8000/v1/vagas` — lista de vagas (vazia até receber MQTT)
 
 ---
 
@@ -115,7 +115,7 @@ Outras URLs úteis:
 5. Em **Instance** procure `i-0d2ba58f2725d18bf` e selecione
 6. **Associate**
 7. Volte em **Instances** e copie o novo **Public IPv4 address** (será o EIP)
-8. Atualize `<EC2_PUBLIC_IP>` neste documento e nas variáveis do front
+8. Atualize `3.89.194.80` neste documento e nas variáveis do front
 
 > **Custo:** EIPs anexados a instâncias *running* são gratuitos. EIPs alocados
 > mas não associados (ou anexados a instância *stopped*) custam ~US$3.60/mês.
@@ -147,9 +147,4 @@ sudo journalctl -u mosquitto -f
 # Testa publicar MQTT manualmente (vai disparar o worker)
 mosquitto_pub -h localhost -p 1883 \
   -u estacionamento -P "$MQTT_PASSWORD" \
-  -t "estacionamento/pi-test/vagas" \
-  -m '{"vaga_id":"A01","status":"ocupada","timestamp":1714320000000,"pi_id":"pi-test","evento_id":"abc-123"}'
-
-# Confere se chegou ao banco
-sqlite3 ~/estacionamento-iot/vagas.db "SELECT * FROM vagas_estado;"
-```
+  -t 

@@ -41,14 +41,12 @@ fi
 "${APP_DIR}/.venv/bin/pip" install -q -r "${APP_DIR}/requirements.txt"
 
 echo "=== [2/6] Configurando Mosquitto ==="
+# Apenas declara o listener e auth — persistence/log_dest já vêm da config padrão
 sudo tee /etc/mosquitto/conf.d/estacionamento.conf > /dev/null <<EOF
 # Gerado por setup_ec2.sh
 listener 1883 0.0.0.0
 allow_anonymous false
 password_file /etc/mosquitto/passwd
-persistence true
-persistence_location /var/lib/mosquitto/
-log_dest syslog
 EOF
 
 # Cria/atualiza usuário MQTT (mosquitto_passwd -b é idempotente)
@@ -148,4 +146,4 @@ echo "=== Setup concluído ==="
 echo "Status dos serviços:"
 sudo systemctl --no-pager status estacionamento-api.service | head -3
 sudo systemctl --no-pager status estacionamento-worker.service | head -3
-sudo systemctl --no-pager status mosquitto.service | head -3
+sudo systemctl --no-pager status mosquitto.servi

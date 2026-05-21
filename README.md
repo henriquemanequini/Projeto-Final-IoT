@@ -2,14 +2,24 @@
 
 Backend Python para o projeto IoT de estacionamento inteligente do Insper.
 
-**Equipe:** Henrique (Cloud — este repo) | Rodrigo (Hardware/PLC) | Augusto (Web/React)
+**Equipe:** Henrique (Cloud — este repo) | Rodrigo (Hardware/PLC) | Augusto (Web/React + bridge PLC)
 
-**Arquitetura:**
+## Arquitetura
+
 ```
-PLC S7-1200  →  Raspberry Pi  →  AWS IoT Core  →  DynamoDB  →  FastAPI  →  Frontend React
-                                       │
-                                       └──→  WebSocket MQTT  →  Frontend (real-time)
+PLC S7-1200  →  PC do lab (plc_to_mqtt.py)  →  EC2  ──┐
+                                                      │
+                                  ┌──── Mosquitto (broker MQTT, porta 1883)
+                                  │
+                                  ├──── Worker (mqtt_consumer) ── grava em SQLite
+                                  │
+                                  └──── FastAPI (porta 8000) ── lê do SQLite ── Frontend React
 ```
+
+Tudo roda numa única EC2 t3.small (`3.89.194.80`), gerenciado por 3 serviços systemd:
+`mosquitto`, `estacionamento-worker`, `estacionamento-api`.
+
+Sem AWS IoT Core, sem DynamoDB, sem Lambda — abordagem self-hosted, mais barata e mais fácil de demonstrar.
 
 ---
 
@@ -21,144 +31,120 @@ estacionamento-iot/
 ├── requirements.txt                Dependências Python
 ├── .env.example                    Template de variáveis de ambiente
 ├── .gitignore
+│
 ├── src/
 │   ├── api/                        FastAPI — backend REST
 │   │   ├── main.py                 Entrypoint, CORS, healthcheck
 │   │   ├── config.py               Settings via pydantic-settings
-│   │   ├── schemas.py              Pydantic models (request/response)
-│   │   ├── services/dynamo.py      Acesso ao DynamoDB (cliente cacheado)
-│   │   └── routers/vagas.py        Endpoints de /v1/vagas
-│   └── lambdas/
-│       └── atualiza_estado/        Lambda que mantém vagas_estado atualizada
+│   │   ├── schemas.py              Pydantic models
+│   │   ├── services/
+│   │   │   ├── repositorio.py      Fachada: memoria | sqlite | dynamodb
+│   │   │   └── sqlite_repo.py      Implementação SQLite (UPSERT idempotente)
+│   │   └── routers/vagas.py        Endpoints /v1/vagas, /v1/estatisticas
+│   ├── workers/
+│   │   └── mqtt_consumer.py        Worker que escuta MQTT e grava no SQLite
+│   └── lambdas/                    [legado, não usado]
+│
 ├── scripts/
-│   ├── simulador_pi.py             Simula Pi publicando MQTT (dry-run ou real)
-│   └── seed_dynamo.py              Popula DynamoDB com dados de teste (sem AWS IoT)
-├── infra/
-│   └── README.md                   Passo-a-passo manual no AWS Console
-└── tests/
-    └── test_api.py                 Testes pytest com moto (mock AWS)
+│   ├── setup_ec2.sh                Setup idempotente da EC2 (Mosquitto+API+worker)
+│   ├── deploy_ec2.sh               Deploy do código pra EC2
+│   ├── plc_to_mqtt.py              Bridge Modbus → MQTT (rodando no PC do lab)
+│   ├── simulador_mqtt.py           Publica eventos MQTT de qualquer PC (validação)
+│   ├── validar_cloud.sh            Valida pipeline end-to-end na própria EC2
+│   ├── demo_video3.sh              Demo guiada pra o vídeo 3 (integração AWS)
+│   ├── simulador_pi.py             [legado] Simulador antigo (AWS IoT Core)
+│   └── seed_dynamo.py              [legado] Populava DynamoDB
+│
+├── infra/                          [legado, AWS managed que foi abandonado]
+├── tests/                          pytest (17+ testes passando)
+│   ├── test_api.py
+│   └── test_sqlite_repo.py
+│
+├── PROXIMOS_PASSOS_EC2.md          Setup da EC2, passo a passo
+├── TESTE_LAB.md                    Como rodar o teste com CLP no PC do lab
+└── ROTEIROS_VIDEOS.md              Roteiros dos 3 vídeos de demonstração
 ```
 
 ---
 
-## Setup local — passo a passo
+## Setup local — desenvolvimento
 
-### 1. Instalar Python (se ainda não tiver)
-
-**Windows:**
-1. Baixa em https://www.python.org/downloads/ — versão 3.11 ou 3.12
-2. **CRÍTICO:** marca "Add Python to PATH" no instalador antes de Next
-3. Instala
-4. Abre PowerShell novo e confirma: `python --version`
-
-### 2. Criar virtual environment
-
-Dentro da pasta do projeto:
 ```bash
 python -m venv .venv
-```
+.venv\Scripts\Activate.ps1     # Windows PowerShell
+source .venv/bin/activate      # macOS/Linux
 
-Ativa:
-- Windows PowerShell: `.venv\Scripts\Activate.ps1`
-- Windows CMD: `.venv\Scripts\activate.bat`
-- macOS/Linux: `source .venv/bin/activate`
-
-Vc vai ver `(.venv)` aparecer no início da linha.
-
-### 3. Instalar dependências
-
-```bash
 pip install -r requirements.txt
+cp .env.example .env           # (ou copy no Windows)
 ```
 
-### 4. Copiar .env.example pra .env
+Por padrão `.env.example` deixa `MODO_STORAGE=sqlite` — gera um `vagas.db` local.
+Pra rodar sem persistência (memória, útil pra testes):
 
 ```bash
-cp .env.example .env       # macOS/Linux
-copy .env.example .env     # Windows
+$env:MODO_STORAGE="memoria"    # PowerShell
+export MODO_STORAGE=memoria    # bash
 ```
 
-Edita `.env` com as configs — por enquanto pode deixar como tá (modo local sem AWS).
+### Rodar API local
 
-### 5. Rodar API local em modo "fake" (sem AWS)
-
-Para desenvolver sem precisar AWS conectada:
 ```bash
-python scripts/seed_dynamo.py --local
 uvicorn src.api.main:app --reload --port 8000
 ```
 
-Abre no browser: http://localhost:8000/docs — interface Swagger pra testar todos os endpoints.
+Abre http://localhost:8000/docs (Swagger).
 
----
-
-## Setup AWS — quando tiver credenciais
-
-Ver `infra/README.md` para o passo-a-passo no AWS Console.
-
-Resumo:
-1. Criar IoT Thing + certificado + policy
-2. Criar 2 tabelas DynamoDB (`vagas_eventos` e `vagas_estado`)
-3. Criar IoT Rule que joga eventos de MQTT no DynamoDB
-4. Criar Lambda `atualiza_estado` (código em `src/lambdas/atualiza_estado/`)
-5. Atualizar `.env` com nomes das tabelas e região
-6. Rodar `python scripts/simulador_pi.py` com os certificados — eventos chegam no DynamoDB
-7. Rodar `uvicorn src.api.main:app` — API agora lê do DynamoDB real
-
----
-
-## Comandos do dia-a-dia
+### Rodar testes
 
 ```bash
-# Rodar API local
-uvicorn src.api.main:app --reload --port 8000
-
-# Rodar simulador (dry-run, sem AWS)
-python scripts/simulador_pi.py --dry-run --modo aleatorio
-
-# Rodar simulador (publicando real no AWS IoT Core)
-python scripts/simulador_pi.py --endpoint XXX --cert ./certs/c.crt --key ./certs/k.key --ca ./certs/ca.pem --pi-id pi-setor-a
-
-# Popular DynamoDB local com dados fake
-python scripts/seed_dynamo.py --local
-
-# Rodar testes
 pytest -v
 ```
 
 ---
 
-## Contratos de integração (resumo)
+## Setup EC2 — produção
 
-### MQTT — payload publicado pelo Pi
+Ver `PROXIMOS_PASSOS_EC2.md` para o passo-a-passo completo. Resumo:
+
+1. EC2 Ubuntu 22.04, Security Group abrindo 22, 1883, 8000
+2. `git clone` do repo, rodar `bash scripts/setup_ec2.sh`
+3. Conferir: `systemctl is-active mosquitto estacionamento-api estacionamento-worker`
+4. Validar end-to-end: `bash scripts/validar_cloud.sh`
+
+---
+
+## Validação end-to-end (na EC2)
+
+Roda dentro da própria EC2, sem precisar do lab:
+
+```bash
+export MQTT_PASSWORD=$(grep MQTT_PASSWORD ~/estacionamento-iot/.env | cut -d= -f2-)
+bash scripts/validar_cloud.sh
+```
+
+Publica 3 eventos no broker local, confere que o worker gravou no SQLite e que a API
+expõe via REST. Testa também idempotência (evento fora de ordem não corrompe o estado).
+
+Saída esperada: `✓✓✓ TODOS OS TESTES PASSARAM ✓✓✓`.
+
+---
+
+## Contratos de integração
+
+### MQTT — payload publicado pelo bridge do lab
+
 ```json
 {
   "vaga_id": "A01",
   "status": "ocupada",
   "timestamp": 1714320000000,
-  "pi_id": "pi-setor-a",
+  "pi_id": "lab-insper",
   "evento_id": "uuid-v4"
 }
 ```
-Tópico: `estacionamento/{pi_id}/vagas`
 
-### API REST (base /v1)
-- `GET /v1/vagas` — todas as vagas, estado atual
-- `GET /v1/vagas/{vaga_id}` — uma vaga
-- `GET /v1/vagas/{vaga_id}/historico?from=...&to=...` — histórico
-- `GET /v1/estatisticas` — agregados (livres, ocupadas, taxa)
-- `GET /v1/health` — healthcheck
+Tópico: `estacionamento/{pi_id}/vagas` (QoS 1).
 
-Documentação interativa: `/docs` (Swagger) ou `/redoc`.
+O worker subscreve em `estacionamento/+/vagas` e processa qualquer `pi_id`.
 
----
-
-## Troubleshooting
-
-**`python: command not found`** → Python não foi adicionado ao PATH. Reinstala marcando a opção "Add Python to PATH".
-
-**`ModuleNotFoundError`** → esqueceu de ativar o venv ou de rodar `pip install -r requirements.txt`.
-
-**API roda mas retorna lista vazia** → roda `python scripts/seed_dynamo.py --local` antes pra popular dados de teste.
-
-**Erro de credentials AWS** → API tá tentando conectar AWS real. Configura `MODO_LOCAL=true` no `.env` pra usar mock em memória.
+### API REST (base `/v
