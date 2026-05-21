@@ -1,150 +1,158 @@
-# Estacionamento Inteligente — Backend Cloud
+# Estacionamento Inteligente — IoT + AWS
 
-Backend Python para o projeto IoT de estacionamento inteligente do Insper.
+Sistema de monitoramento de vagas de estacionamento usando CLP Siemens,
+AWS IoT Core, Timestream e dashboard Streamlit.
 
-**Equipe:** Henrique (Cloud — este repo) | Rodrigo (Hardware/PLC) | Augusto (Web/React + bridge PLC)
+**Equipe:** Henrique (Cloud/Dashboard) | Rodrigo (Hardware/PLC) | Augusto (Bridge PLC + integracao)
 
-## Arquitetura
+## Arquitetura (v2 — atual)
 
 ```
-PLC S7-1200  →  PC do lab (plc_to_mqtt.py)  →  EC2  ──┐
-                                                      │
-                                  ┌──── Mosquitto (broker MQTT, porta 1883)
-                                  │
-                                  ├──── Worker (mqtt_consumer) ── grava em SQLite
-                                  │
-                                  └──── FastAPI (porta 8000) ── lê do SQLite ── Frontend React
+PLC S7-1200  →  Bridge Python (lab)  →  AWS IoT Core  ─[IoT Rule]→  AWS Timestream
+   Modbus TCP        plc_to_iot.py       MQTT/TLS 443                    │
+                                                                          │
+                                                              Dashboard Streamlit
+                                                                  app.py
 ```
 
-Tudo roda numa única EC2 t3.small (`3.89.194.80`), gerenciado por 3 serviços systemd:
-`mosquitto`, `estacionamento-worker`, `estacionamento-api`.
+Tudo roda direto na infra do professor: o **broker AWS IoT Core**
+recebe os eventos via MQTT/TLS na porta 443 (atravessa qualquer firewall),
+um **IoT Rule** ja configurado pelo professor joga os dados no
+**Timestream**, e o **dashboard Streamlit** consulta o banco em tempo real.
 
-Sem AWS IoT Core, sem DynamoDB, sem Lambda — abordagem self-hosted, mais barata e mais fácil de demonstrar.
-
----
+Sem precisar de EC2, Mosquitto, SQLite local, ou abrir portas em firewall.
 
 ## Estrutura do projeto
 
 ```
 estacionamento-iot/
-├── README.md                       Este arquivo
-├── requirements.txt                Dependências Python
-├── .env.example                    Template de variáveis de ambiente
-├── .gitignore
+├── README.md                          Este arquivo
+├── requirements.txt                   Dependencias Python
+├── .env.example                       Template de variaveis de ambiente
+├── .gitignore                         Ignora certs/, .env, *.db, .venv
 │
-├── src/
-│   ├── api/                        FastAPI — backend REST
-│   │   ├── main.py                 Entrypoint, CORS, healthcheck
-│   │   ├── config.py               Settings via pydantic-settings
-│   │   ├── schemas.py              Pydantic models
-│   │   ├── services/
-│   │   │   ├── repositorio.py      Fachada: memoria | sqlite | dynamodb
-│   │   │   └── sqlite_repo.py      Implementação SQLite (UPSERT idempotente)
-│   │   └── routers/vagas.py        Endpoints /v1/vagas, /v1/estatisticas
-│   ├── workers/
-│   │   └── mqtt_consumer.py        Worker que escuta MQTT e grava no SQLite
-│   └── lambdas/                    [legado, não usado]
+├── certs/                             [GITIGNORED] Certificados X.509 do prof
+│   ├── AmazonRootCA1.pem
+│   ├── *-certificate.pem.crt
+│   └── *-private.pem.key
+│
+├── dashboard/
+│   └── app.py                         Streamlit - le do Timestream, mostra vagas
 │
 ├── scripts/
-│   ├── setup_ec2.sh                Setup idempotente da EC2 (Mosquitto+API+worker)
-│   ├── deploy_ec2.sh               Deploy do código pra EC2
-│   ├── plc_to_mqtt.py              Bridge Modbus → MQTT (rodando no PC do lab)
-│   ├── simulador_mqtt.py           Publica eventos MQTT de qualquer PC (validação)
-│   ├── validar_cloud.sh            Valida pipeline end-to-end na própria EC2
-│   ├── demo_video3.sh              Demo guiada pra o vídeo 3 (integração AWS)
-│   ├── simulador_pi.py             [legado] Simulador antigo (AWS IoT Core)
-│   └── seed_dynamo.py              [legado] Populava DynamoDB
+│   ├── plc_to_iot.py                  Bridge PLC -> IoT Core (rodar no PC do lab)
+│   ├── teste_iot_core.py              Teste minimo: publica 3 eventos no IoT Core
+│   ├── teste_timestream.py            Teste minimo: le do Timestream
+│   │
+│   ├── plc_to_mqtt.py                 [legado v1] Bridge antiga (Mosquitto)
+│   ├── simulador_mqtt.py              [legado v1] Simulador antigo
+│   ├── setup_ec2.sh                   [legado v1] Setup EC2
+│   ├── deploy_ec2.sh                  [legado v1]
+│   ├── validar_cloud.sh               [legado v1] Validador EC2
+│   └── demo_video3.sh                 [legado v1]
 │
-├── infra/                          [legado, AWS managed que foi abandonado]
-├── tests/                          pytest (17+ testes passando)
-│   ├── test_api.py
-│   └── test_sqlite_repo.py
+├── src/                               [legado v1] API FastAPI (mantida pra historico)
+├── tests/                             Tests pytest da API legada
+├── infra/                             [legado] AWS CloudFormation antigo
 │
-├── PROXIMOS_PASSOS_EC2.md          Setup da EC2, passo a passo
-├── TESTE_LAB.md                    Como rodar o teste com CLP no PC do lab
-└── ROTEIROS_VIDEOS.md              Roteiros dos 3 vídeos de demonstração
+└── PROXIMOS_PASSOS_EC2.md             [legado v1] Setup da EC2
+    TESTE_LAB.md, TESTE_PC_LAB.md      [legado v1] Guias do lab
+    ROTEIROS_VIDEOS.md                 Roteiros dos 3 videos
 ```
 
 ---
 
-## Setup local — desenvolvimento
+## Setup local — passo a passo
 
-```bash
+### 1. Clonar o repo e criar venv
+
+```powershell
+git clone https://github.com/henriquemanequini/Projeto-Final-IoT.git
+cd Projeto-Final-IoT
 python -m venv .venv
-.venv\Scripts\Activate.ps1     # Windows PowerShell
-source .venv/bin/activate      # macOS/Linux
-
+.venv\Scripts\Activate.ps1     # Windows
+# source .venv/bin/activate    # Linux/Mac
 pip install -r requirements.txt
-cp .env.example .env           # (ou copy no Windows)
 ```
 
-Por padrão `.env.example` deixa `MODO_STORAGE=sqlite` — gera um `vagas.db` local.
-Pra rodar sem persistência (memória, útil pra testes):
+### 2. Pegar os certificados do professor
 
-```bash
-$env:MODO_STORAGE="memoria"    # PowerShell
-export MODO_STORAGE=memoria    # bash
+Baixe o ZIP do Blackboard e copie todos os `.pem*` da pasta
+`exemplo 1 - streamlit/certs/` pra `certs/` deste projeto.
+
+A pasta `certs/` esta no `.gitignore` — esses arquivos sao secretos e
+NUNCA devem ir pro GitHub.
+
+### 3. Configurar variaveis de ambiente
+
+```powershell
+copy .env.example .env
+notepad .env
 ```
 
-### Rodar API local
-
-```bash
-uvicorn src.api.main:app --reload --port 8000
-```
-
-Abre http://localhost:8000/docs (Swagger).
-
-### Rodar testes
-
-```bash
-pytest -v
-```
+Preencha pelo menos:
+- `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` (do `timestream-query-example.py` do prof)
+- `DEVICE_ID` — escolha um valor unico do nosso grupo (ex: `estacionamento-henrique`)
 
 ---
 
-## Setup EC2 — produção
+## Testar a arquitetura em 2 minutos
 
-Ver `PROXIMOS_PASSOS_EC2.md` para o passo-a-passo completo. Resumo:
+### Passo 1: publicar 3 eventos no IoT Core
 
-1. EC2 Ubuntu 22.04, Security Group abrindo 22, 1883, 8000
-2. `git clone` do repo, rodar `bash scripts/setup_ec2.sh`
-3. Conferir: `systemctl is-active mosquitto estacionamento-api estacionamento-worker`
-4. Validar end-to-end: `bash scripts/validar_cloud.sh`
+```powershell
+python scripts/teste_iot_core.py
+```
+
+Esperado:
+```
+✓ Conectado ao AWS IoT Core aspvpxjmfalxx-ats.iot.us-east-1.amazonaws.com:443
+→ PUBLISH vaga=A01 status=ocupada
+→ PUBLISH vaga=A02 status=livre
+→ PUBLISH vaga=A03 status=ocupada
+✓ Publicacao confirmada pelo broker (3x)
+```
+
+### Passo 2: ler do Timestream
+
+Aguarde uns 10-30s pra o IoT Rule processar e gravar no banco. Depois:
+
+```powershell
+python scripts/teste_timestream.py
+```
+
+Esperado: as 3 vagas aparecendo com `device_id` que voce configurou.
+
+### Passo 3: abrir o dashboard
+
+```powershell
+streamlit run dashboard/app.py
+```
+
+Acesse http://localhost:8501. Voce vai ver:
+- Resumo livres/ocupadas/taxa
+- Grid das 8 vagas com cor (verde/vermelho/cinza)
+- Grafico temporal
+- Tabela do historico bruto
 
 ---
 
-## Validação end-to-end (na EC2)
+## Rodar com o CLP de verdade (no PC do lab)
 
-Roda dentro da própria EC2, sem precisar do lab:
+No PC conectado fisicamente a rede do CLP:
 
-```bash
-export MQTT_PASSWORD=$(grep MQTT_PASSWORD ~/estacionamento-iot/.env | cut -d= -f2-)
-bash scripts/validar_cloud.sh
+```powershell
+# Confere conectividade primeiro (le PLC sem publicar)
+$env:SKIP_MQTT = "true"
+python scripts/plc_to_iot.py
+
+# Agora roda de verdade
+Remove-Item Env:SKIP_MQTT
+python scripts/plc_to_iot.py
 ```
 
-Publica 3 eventos no broker local, confere que o worker gravou no SQLite e que a API
-expõe via REST. Testa também idempotência (evento fora de ordem não corrompe o estado).
+O bridge fica em loop publicando UMA mensagem por mudanca de coil
+(nao publica a cada ciclo — so quando muda de estado, pra nao
+inundar o broker).
 
-Saída esperada: `✓✓✓ TODOS OS TESTES PASSARAM ✓✓✓`.
-
----
-
-## Contratos de integração
-
-### MQTT — payload publicado pelo bridge do lab
-
-```json
-{
-  "vaga_id": "A01",
-  "status": "ocupada",
-  "timestamp": 1714320000000,
-  "pi_id": "lab-insper",
-  "evento_id": "uuid-v4"
-}
-```
-
-Tópico: `estacionamento/{pi_id}/vagas` (QoS 1).
-
-O worker subscreve em `estacionamento/+/vagas` e processa qualquer `pi_id`.
-
-### API REST (base `/v
+O dashboard 
