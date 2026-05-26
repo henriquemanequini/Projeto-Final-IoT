@@ -217,4 +217,14 @@ def main() -> int:
         print()
         info("Pro verificar se chegaram no Timestream, rode:")
         print(f"  {Cor.INFO}python scripts/teste_timestream.py{Cor.RESET}")
-        print(
+        print()
+        info("Ou abra o dashboard:")
+        print(f"  {Cor.INFO}python -m streamlit run dashboard/app.py{Cor.RESET}")
+        return 0
+
+    err(f"So {sucesso}/{len(eventos)} eventos publicados com sucesso")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
