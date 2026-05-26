@@ -179,28 +179,27 @@ def main() -> int:
     print()
     info("Publicando 3 eventos de teste...")
 
+    # Schema esperado pelo IoT Rule do prof: device_id (string), timestamp (bigint),
+    # ocupacao (0=livre, 1=ocupada). Codificamos a vaga no proprio device_id
+    # (ex: 'estacionamento-henrique-A01') pra fazer 1 device por vaga.
     eventos = [
-        ("A01", "ocupada"),
-        ("A02", "livre"),
-        ("A03", "ocupada"),
+        ("A01", 1),  # ocupada
+        ("A02", 0),  # livre
+        ("A03", 1),  # ocupada
     ]
 
     sucesso = 0
-    for vaga_id, status in eventos:
-        # Payload no formato que o IoT Rule do professor espera (igual ao
-        # exemplo dele): device_id + timestamp + measures como campos extras.
-        # vaga_id e status entram como measures no Timestream.
+    for vaga_id, ocupacao in eventos:
         payload = {
-            "device_id": DEVICE_ID,
-            "timestamp": str(int(time.time())),
-            "vaga_id": vaga_id,
-            "status": status,
-            "evento_id": str(uuid.uuid4()),
+            "device_id": f"{DEVICE_ID}-{vaga_id}",
+            "timestamp": int(time.time() * 1000),
+            "ocupacao": ocupacao,
         }
         msg = json.dumps(payload)
         result = client.publish(TOPIC, msg, qos=0)
+        status_txt = "ocupada" if ocupacao == 1 else "livre"
         if result.rc == 0:
-            info(f"  → PUBLISH vaga={vaga_id} status={status}")
+            info(f"  → PUBLISH device_id={DEVICE_ID}-{vaga_id} ocupacao={ocupacao} ({status_txt})")
             sucesso += 1
         else:
             err(f"  Falha publicando {vaga_id} (rc={result.rc})")
@@ -218,6 +217,4 @@ def main() -> int:
         print()
         info("Pro verificar se chegaram no Timestream, rode:")
         print(f"  {Cor.INFO}python scripts/teste_timestream.py{Cor.RESET}")
-        print()
-        info("Ou abra o dashboard:")
-        print(f"  {Cor.INFO}stre
+        print(

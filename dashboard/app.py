@@ -2,20 +2,23 @@
 Dashboard Streamlit - Estacionamento Inteligente
 =================================================
 
-Le os eventos do AWS Timestream (database iot-eletiva, table iot-2025) e
-mostra em tempo real:
+Le os eventos do AWS Timestream (SmartSpace.Ocupacao) e mostra:
 - Status atual de cada vaga (A01..A08)
 - Resumo livres/ocupadas/taxa de ocupacao
 - Historico de eventos
 - Grafico de ocupacao ao longo do tempo
 
-Como conhecemos o topico compartilhado "iot/aula13" com outros grupos da turma,
-filtramos por device_id pra ver SO os dados do nosso estacionamento.
+Schema do banco (descoberto via teste_timestream_debug.py):
+    device_id   string  -> codificamos vaga aqui: 'DEVICE_ID-VAGA'
+    timestamp   bigint  -> unix ms
+    ocupacao    bigint  -> 0 = livre, 1 = ocupada
+
+Filtramos por device_id LIKE '<DEVICE_ID>-%' pra ver SO as nossas vagas
+(o topico 'iot/aula13' eh compartilhado entre toda a turma).
 
 Uso:
     pip install -r requirements.txt
-    # Defina as credenciais AWS (do .env do projeto)
-    streamlit run dashboard/app.py
+    python -m streamlit run dashboard/app.py
 
 Acessa em: http://localhost:8501
 """
@@ -23,9 +26,7 @@ Acessa em: http://localhost:8501
 from __future__ import annotations
 
 import os
-from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 # Carrega .env automaticamente (precisa estar antes de boto3 etc)
 try:
@@ -48,9 +49,9 @@ import streamlit as st
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
-DATABASE = os.getenv("TIMESTREAM_DB", "iot-eletiva")
-TABLE = os.getenv("TIMESTREAM_TABLE", "iot-2025")
-DEVICE_ID = os.getenv("DEVICE_ID", "estacionamento-lab")
+DATABASE = os.getenv("TIMESTREAM_DB", "SmartSpace")
+TABLE = os.getenv("TIMESTREAM_TABLE", "Ocupacao")
+DEVICE_ID = os.getenv("DEVICE_ID", "estacionamento-henrique")
 NUM_VAGAS = int(os.getenv("NUM_VAGAS", "8"))
 SPOT_PREFIX = os.getenv("SPOT_PREFIX", "A")
 
@@ -76,20 +77,35 @@ def get_client():
     )
 
 
+def vaga_de(device_id: str) -> str:
+    """Extrai vaga do device_id (ex: 'estacionamento-henrique-A01' -> 'A01')."""
+    return device_id.rsplit("-", 1)[-1] if "-" in device_id else device_id
+
+
+def status_de(ocupacao_val) -> str:
+    """0 -> livre, 1 -> ocupada"""
+    if ocupacao_val is None or ocupacao_val == "":
+        return "desconhecido"
+    try:
+        return "ocupada" if int(ocupacao_val) == 1 else "livre"
+    except (ValueError, TypeError):
+        return "desconhecido"
+
+
 @st.cache_data(ttl=5)
 def query_eventos(horas: int = 24, limit: int = 500) -> pd.DataFrame:
     """
     Le os ultimos eventos do Timestream e retorna um DataFrame com
-    uma linha por evento (time, device_id, vaga_id, status).
+    uma linha por evento: time, device_id, vaga_id (derivada), ocupacao, status.
 
-    O Timestream guarda 1 row por measure, entao agrupamos por
+    O Timestream guarda 1 row por measure, entao reagrupamos por
     time + device_id pra montar o evento completo.
     """
     client = get_client()
     query = f'''
         SELECT *
         FROM "{DATABASE}"."{TABLE}"
-        WHERE device_id = '{DEVICE_ID}'
+        WHERE device_id LIKE '{DEVICE_ID}-%'
           AND time BETWEEN ago({horas}h) AND now()
         ORDER BY time DESC
         LIMIT {limit}
@@ -104,8 +120,6 @@ def query_eventos(horas: int = 24, limit: int = 500) -> pd.DataFrame:
     cols = [c["Name"] for c in response.get("ColumnInfo", [])]
     rows = response.get("Rows", [])
 
-    # Agrupa rows por (time, device_id) ja que Timestream retorna 1 linha
-    # por measure (vaga_id e status sao measures diferentes)
     grouped: dict[str, dict] = {}
     for row in rows:
         item = {}
@@ -120,9 +134,9 @@ def query_eventos(horas: int = 24, limit: int = 500) -> pd.DataFrame:
         measure_name = item.get("measure_name")
         if measure_name:
             valor = (
-                item.get("measure_value::varchar")
+                item.get("measure_value::bigint")
+                or item.get("measure_value::varchar")
                 or item.get("measure_value::double")
-                or item.get("measure_value::bigint")
             )
             grouped[key][measure_name] = valor
 
@@ -133,17 +147,22 @@ def query_eventos(horas: int = 24, limit: int = 500) -> pd.DataFrame:
     if "time" in df.columns:
         df["time"] = pd.to_datetime(df["time"])
         df = df.sort_values("time", ascending=False)
+
+    # Deriva vaga_id e status a partir do device_id e ocupacao
+    if "device_id" in df.columns:
+        df["vaga_id"] = df["device_id"].apply(vaga_de)
+    if "ocupacao" in df.columns:
+        df["status"] = df["ocupacao"].apply(status_de)
+    else:
+        df["status"] = "desconhecido"
+
     return df
 
 
 def estado_atual_vagas(df_eventos: pd.DataFrame) -> dict[str, dict]:
-    """
-    Reconstroi o estado atual de cada vaga a partir do historico de eventos.
-    Para cada vaga, pega o evento mais recente.
-    """
+    """Reconstroi o estado atual de cada vaga pegando o evento mais recente."""
     estado: dict[str, dict] = {}
 
-    # Inicializa todas as vagas como desconhecida
     for i in range(1, NUM_VAGAS + 1):
         vaga_id = f"{SPOT_PREFIX}{i:02d}"
         estado[vaga_id] = {
@@ -155,7 +174,6 @@ def estado_atual_vagas(df_eventos: pd.DataFrame) -> dict[str, dict]:
     if df_eventos.empty or "vaga_id" not in df_eventos.columns:
         return estado
 
-    # df ja vem ordenado por time DESC. Pra cada vaga, primeiro evento = atual.
     for _, row in df_eventos.iterrows():
         vaga_id = row.get("vaga_id")
         if not vaga_id:
@@ -174,14 +192,13 @@ def estado_atual_vagas(df_eventos: pd.DataFrame) -> dict[str, dict]:
 # UI
 # ---------------------------------------------------------------------------
 
-st.set_page_config(
-    page_title="Estacionamento IoT",
-    page_icon="🅿️",
-    layout="wide",
-)
+st.set_page_config(page_title="Estacionamento IoT", page_icon="🅿️", layout="wide")
 
 st.title("🅿️ Estacionamento Inteligente")
-st.caption(f"Device: `{DEVICE_ID}` · Topico: `iot/aula13` · Banco: `{DATABASE}.{TABLE}`")
+st.caption(
+    f"Device prefix: `{DEVICE_ID}-*` · "
+    f"Banco: `{DATABASE}.{TABLE}` · Topico: `iot/aula13`"
+)
 
 with st.sidebar:
     st.header("Filtros")
@@ -191,41 +208,34 @@ with st.sidebar:
     intervalo = st.slider("Intervalo (s)", 2, 60, 10) if auto_refresh else None
 
     st.divider()
-    st.caption("Forcar reload do cache:")
     if st.button("Atualizar agora", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
 
-# Busca dados
 df = query_eventos(horas=horas, limit=limit)
 
 if df.empty:
     st.warning(
-        f"Nenhum evento encontrado para `device_id={DEVICE_ID}` "
+        f"Nenhum evento encontrado para `device_id LIKE {DEVICE_ID}-%` "
         f"nas ultimas {horas}h. Verifique se o bridge esta rodando."
     )
     st.stop()
 
 
-# Estado atual
 estado = estado_atual_vagas(df)
 livres = sum(1 for v in estado.values() if v["status"] == "livre")
 ocupadas = sum(1 for v in estado.values() if v["status"] == "ocupada")
-desconhecidas = NUM_VAGAS - livres - ocupadas
 taxa = (ocupadas / max(NUM_VAGAS, 1)) * 100
 
-# Metricas
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Total de vagas", NUM_VAGAS)
-c2.metric("Livres", livres, delta=None)
+c2.metric("Livres", livres)
 c3.metric("Ocupadas", ocupadas)
 c4.metric("Taxa de ocupacao", f"{taxa:.0f}%")
 
 st.divider()
 
-
-# Grid de vagas
 st.subheader("Status atual das vagas")
 
 cols_per_row = 4
@@ -256,13 +266,8 @@ for row_start in range(0, NUM_VAGAS, cols_per_row):
 
         col.markdown(
             f"""
-            <div style="
-                background:{bg};
-                border-radius:12px;
-                padding:18px;
-                text-align:center;
-                border:1px solid rgba(255,255,255,0.1);
-            ">
+            <div style="background:{bg};border-radius:12px;padding:18px;
+                        text-align:center;border:1px solid rgba(255,255,255,0.1);">
                 <div style="font-size:32px;">{cor}</div>
                 <div style="font-size:22px;font-weight:600;">{vaga_id}</div>
                 <div style="opacity:0.7;text-transform:uppercase;font-size:13px;">{status}</div>
@@ -274,17 +279,12 @@ for row_start in range(0, NUM_VAGAS, cols_per_row):
 
 st.divider()
 
+st.subheader("Eventos por minuto")
 
-# Grafico de ocupacao ao longo do tempo
-st.subheader("Ocupacao ao longo do tempo")
-
-if not df.empty and "status" in df.columns and "vaga_id" in df.columns:
-    # Reconstroi a serie temporal de OCUPADAS contando eventos
+if not df.empty and "status" in df.columns:
     df_grafico = df.sort_values("time").copy()
     df_grafico["ocupada_int"] = (df_grafico["status"] == "ocupada").astype(int)
     df_grafico["livre_int"] = (df_grafico["status"] == "livre").astype(int)
-
-    # Resample por minuto pra suavizar
     df_grafico = df_grafico.set_index("time")
     contagem = (
         df_grafico.groupby(pd.Grouper(freq="1min"))
@@ -295,11 +295,11 @@ if not df.empty and "status" in df.columns and "vaga_id" in df.columns:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=contagem["time"], y=contagem["ocupada"],
-        name="Eventos 'ocupada'", line=dict(color="#ff4d4d", width=2),
+        name="ocupada", line=dict(color="#ff4d4d", width=2),
     ))
     fig.add_trace(go.Scatter(
         x=contagem["time"], y=contagem["livre"],
-        name="Eventos 'livre'", line=dict(color="#33cc33", width=2),
+        name="livre", line=dict(color="#33cc33", width=2),
     ))
     fig.update_layout(
         height=350, margin=dict(t=20, b=20, l=10, r=10),
@@ -308,21 +308,16 @@ if not df.empty and "status" in df.columns and "vaga_id" in df.columns:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-
-# Distribuicao por vaga
 st.subheader("Distribuicao de eventos por vaga")
 if "vaga_id" in df.columns:
     dist = df.groupby(["vaga_id", "status"]).size().reset_index(name="qtd")
     fig2 = px.bar(
-        dist,
-        x="vaga_id", y="qtd", color="status",
+        dist, x="vaga_id", y="qtd", color="status",
         color_discrete_map={"ocupada": "#ff4d4d", "livre": "#33cc33"},
         labels={"qtd": "Eventos", "vaga_id": "Vaga"},
     )
     fig2.update_layout(height=300, margin=dict(t=20, b=20, l=10, r=10))
     st.plotly_chart(fig2, use_container_width=True)
 
-
-# Tabela de eventos brutos
 with st.expander(f"Historico bruto ({len(df)} eventos)"):
-    cols_mostrar = [c for c in ["time", "vaga_id", "status", "evento_id", 
+   

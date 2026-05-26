@@ -168,17 +168,18 @@ def publicar_evento(cli: Optional[mqtt.Client], vaga_id: str, status: str) -> No
     """
     Publica um evento de mudanca de estado no topico do professor.
 
-    Payload no formato esperado pelo IoT Rule:
-        device_id, timestamp (unix segundos como string) + measures (vaga_id, status)
+    Schema esperado pelo IoT Rule (SmartSpace.Ocupacao):
+        device_id (string) -> codificamos a vaga aqui: 'DEVICE_ID-VAGA' (ex: 'estacionamento-lab-A01')
+        timestamp (bigint) -> unix em ms
+        ocupacao (bigint)  -> 0 = livre, 1 = ocupada
 
     Em SKIP_MQTT=true, so loga o payload que SERIA publicado.
     """
+    ocupacao = 1 if status == "ocupada" else 0
     payload = {
-        "device_id": DEVICE_ID,
-        "timestamp": str(int(time.time())),
-        "vaga_id": vaga_id,
-        "status": status,
-        "evento_id": str(uuid.uuid4()),
+        "device_id": f"{DEVICE_ID}-{vaga_id}",
+        "timestamp": int(time.time() * 1000),
+        "ocupacao": ocupacao,
     }
     msg = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
@@ -285,8 +286,3 @@ def main() -> int:
         log.error(f"  Erro: {plc.last_error_as_txt}")
         return 1
     except Exception as e:
-        log.exception(f"Erro inesperado: {e}")
-        return 1
-    finally:
-        log.info("Fechando conexoes")
-     

@@ -1,15 +1,16 @@
 """
-Teste minimo Timestream - Le os ultimos eventos do banco
-=========================================================
+Teste minimo Timestream - Le as ultimas vagas do estacionamento
+================================================================
 
-Conecta no Timestream do professor (database "iot-eletiva", tabela "iot-2025")
-e mostra os ultimos eventos do nosso device_id. Use logo depois do
-teste_iot_core.py pra confirmar que o pipeline funciona end-to-end.
+Conecta no Timestream do prof (SmartSpace.Ocupacao) e mostra as vagas
+do nosso DEVICE_ID (que e usado como prefixo: DEVICE_ID-A01, DEVICE_ID-A02, ...).
+
+Schema do banco (descoberto via teste_timestream_debug.py):
+    device_id   -> string (a gente codifica vaga aqui: 'DEVICE_ID-VAGA')
+    timestamp   -> bigint (unix ms)
+    ocupacao    -> bigint (0 = livre, 1 = ocupada)
 
 Uso:
-    pip install boto3
-    set AWS_ACCESS_KEY_ID=...
-    set AWS_SECRET_ACCESS_KEY=...
     python scripts/teste_timestream.py
 """
 
@@ -18,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 
 try:
     import boto3
@@ -25,10 +27,8 @@ except ImportError:
     print("ERRO: boto3 nao instalado. Roda: pip install boto3")
     sys.exit(1)
 
-# Carrega .env se disponivel
 try:
     from dotenv import load_dotenv
-    from pathlib import Path
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 except ImportError:
     pass
@@ -41,11 +41,21 @@ except ImportError:
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
-DATABASE = os.getenv("TIMESTREAM_DB", "iot-eletiva")
-TABLE = os.getenv("TIMESTREAM_TABLE", "iot-2025")
+DATABASE = os.getenv("TIMESTREAM_DB", "SmartSpace")
+TABLE = os.getenv("TIMESTREAM_TABLE", "Ocupacao")
 DEVICE_ID = os.getenv("DEVICE_ID", "estacionamento-henrique")
-LIMIT = int(os.getenv("LIMIT", "30"))
+LIMIT = int(os.getenv("LIMIT", "50"))
 DIAS = int(os.getenv("DIAS", "1"))
+
+
+def status_str(ocupacao: str | int | None) -> str:
+    """0 -> livre, 1 -> ocupada, outro -> desconhecido"""
+    if ocupacao is None:
+        return "desconhecido"
+    try:
+        return "ocupada" if int(ocupacao) == 1 else "livre"
+    except (ValueError, TypeError):
+        return str(ocupacao)
 
 
 def main() -> int:
@@ -54,11 +64,10 @@ def main() -> int:
 
     if not AWS_ACCESS_KEY or not AWS_SECRET_KEY:
         print("ERRO: defina AWS_ACCESS_KEY_ID e AWS_SECRET_ACCESS_KEY no ambiente.")
-        print("  (Use as credenciais que o professor disponibilizou no Blackboard.)")
         return 1
 
     print(f"=== Timestream {DATABASE}.{TABLE} (regiao {AWS_REGION}) ===")
-    print(f"Filtro: device_id='{DEVICE_ID}', ultimos {DIAS} dia(s), limit {LIMIT}")
+    print(f"Filtro: device_id LIKE '{DEVICE_ID}-%', ultimos {DIAS} dia(s), limit {LIMIT}")
     print()
 
     client = boto3.client(
@@ -68,11 +77,11 @@ def main() -> int:
         region_name=AWS_REGION,
     )
 
-    # Filtra pelo NOSSO device_id pra nao misturar com outros grupos
+    # Filtra todas as vagas do NOSSO estacionamento (DEVICE_ID-A01, DEVICE_ID-A02, ...)
     query = f'''
         SELECT *
         FROM "{DATABASE}"."{TABLE}"
-        WHERE device_id = '{DEVICE_ID}'
+        WHERE device_id LIKE '{DEVICE_ID}-%'
           AND time BETWEEN ago({DIAS}d) AND now()
         ORDER BY time DESC
         LIMIT {LIMIT}
@@ -88,16 +97,16 @@ def main() -> int:
     rows = response.get("Rows", [])
 
     if not rows:
-        print(f"Nenhum dado encontrado pra device_id='{DEVICE_ID}' nas ultimas {DIAS}d.")
+        print(f"Nenhum dado encontrado pra device_id LIKE '{DEVICE_ID}-%' nas ultimas {DIAS}d.")
         print("Possiveis causas:")
         print("  - O teste_iot_core.py ainda nao foi rodado")
-        print("  - O IoT Rule do professor nao esta mapeando esse topico/payload")
-        print("  - O device_id no .env nao bate com o que foi publicado")
+        print("  - Aguarde uns 30s pro IoT Rule processar")
+        print("  - DEVICE_ID nao bate com o que foi publicado")
         return 1
 
-    print(f"Encontrados {len(rows)} registros:\n")
+    print(f"Encontrados {len(rows)} registros (1 linha por measure no banco):\n")
 
-    # Agrupa por time+device_id porque Timestream retorna uma linha por measure
+    # Reagrupa por (time, device_id) ja que cada evento vira 3 linhas (1 por measure)
     agrupado: dict[str, dict] = {}
     for row in rows:
         item = {}
@@ -107,12 +116,4 @@ def main() -> int:
         if key not in agrupado:
             agrupado[key] = {
                 "time": item.get("time"),
-                "device_id": item.get("device_id"),
-            }
-        m = item.get("measure_name")
-        if m:
-            v = item.get("measure_value::double") or item.get("measure_value::varchar")
-            agrupado[key][m] = v
-
-    for ev in agrupado.values():
-        print(json.dumps(ev, default=s
+ 
